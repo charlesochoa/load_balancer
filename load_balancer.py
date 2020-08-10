@@ -90,20 +90,18 @@ class LoadBalancerSwitch (object):
             elif a.protosrc in self.serversIps:
               log.warning("Receiving an ARP request from a server!!")
               log.debug("%s (%s) => %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
-              self.hosts[a.protosrc] = (a.hwsrc, inport)
               r = arp()
               r.opcode = arp.REPLY
               r.hwsrc = self.switchMac
               r.hwdst = a.hwsrc
               r.protosrc = a.protodst
               r.protodst = a.protosrc
-              e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=a.hwsrc)
+              e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=r.hwdst)
               e.set_payload(r)
               log.debug("%s (%s) replying ARP to %s (%s)" % (r.protosrc, r.hwsrc, r.protodst, r.hwdst))
               msg = of.ofp_packet_out()
               msg.data = e.pack()
               msg.actions.append(of.ofp_action_output(port = inport))
-              msg.in_port = inport
               event.connection.send(msg)
               return
 

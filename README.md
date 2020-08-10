@@ -30,3 +30,16 @@ Implementar una aplicación SDN completa, específicamente un balanceador de car
         about the existence of the pool servers and cannot see any package
         from them. In other words, the load balancer will be completely
         transparent to them.
+
+
+
+
+
+To copy load_balancer.py to mininet virtual machine:
+
+scp -P 3022 "Documents\Unizar\Período 1\Red. Sis Distribuidos\redes-practica2\load_balancer\load_balancer.py" mininet@localhost:/home/mininet/pox/pox/
+
+To run it on the virtual machine:
+
+
+python pox.py log.level --DEBUG load_balancer
