@@ -35,9 +35,14 @@ Implementar una aplicación SDN completa, específicamente un balanceador de car
 
 
 
-To copy load_balancer.py to mininet virtual machine:
+::To copy load_balancer.py to mininet virtual machine:
 
 scp -P 3022 "Documents\Unizar\Período 1\Red. Sis Distribuidos\redes-practica2\load_balancer\load_balancer.py" mininet@localhost:/home/mininet/pox/pox/
+
+
+::To copy topology.py to mininet virtual machine:
+
+scp -P 3022 "Documents\Unizar\Período 1\Red. Sis Distribuidos\redes-practica2\load_balancer\topology.py" mininet@localhost:/home/mininet/mininet/examples
 
 To run it on the virtual machine:
 

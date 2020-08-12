@@ -29,8 +29,9 @@ class LoadBalancerSwitch (object):
     self.switchMac = EthAddr("00:00:00:00:00:" + str(HOST_NUMBER+1))
     self.switchIp = IPAddr("10.0.0." + str(HOST_NUMBER+1))
     # self.clientsMacs = [EthAddr("00:00:00:00:00:" + str(x)) for x in  range(1,HOST_NUMBER/2 +1) ]
-    # self.serversMacs = [EthAddr("00:00:00:00:00:" + str(x)) for x in  range(HOST_NUMBER/2 +1,HOST_NUMBER +1) ]
+    self.serversMacs = [EthAddr("00:00:00:00:00:" + str(x)) for x in  range(HOST_NUMBER/2 +1,HOST_NUMBER +1) ]
     self.hosts = {}
+    self.pendingPackets = {}
     self.clientsIps = [IPAddr("10.0.0." + str(x)) for x in  range(1,HOST_NUMBER/2 +1) ]
     self.serversIps = [IPAddr("10.0.0." + str(x)) for x in  range(HOST_NUMBER/2 +1,HOST_NUMBER +1) ]
     # We want to hear PacketIn messages, so we listen
@@ -54,8 +55,8 @@ class LoadBalancerSwitch (object):
     packet = event.parsed
 
     def select_server():
-      return 0
-      # return random.randint(0,5)
+      # return 0
+      return random.randint(0,5)
 
     """
     if arp request
@@ -90,15 +91,18 @@ class LoadBalancerSwitch (object):
             elif a.protosrc in self.serversIps:
               log.warning("Receiving an ARP request from a server!!")
               log.debug("%s (%s) => %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
-              r = arp()
-              r.opcode = arp.REPLY
-              r.hwsrc = self.switchMac
-              r.hwdst = a.hwsrc
-              r.protosrc = a.protodst
-              r.protodst = a.protosrc
-              e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=r.hwdst)
-              e.set_payload(r)
-              log.debug("%s (%s) replying ARP to %s (%s)" % (r.protosrc, r.hwsrc, r.protodst, r.hwdst))
+              newSourceMac = self.switchMac
+              newDestinyMac = a.hwsrc
+              newSourceIp = a.protosrc
+              newDestinyIp = a.protodst
+              a.opcode = arp.REPLY
+              a.hwsrc = newSourceMac
+              a.hwdst = newDestinyMac
+              a.protosrc = newSourceIp
+              a.protodst = newDestinyIp
+              e = ethernet(type=ethernet.ARP_TYPE, src=newSourceMac, dst=newDestinyMac)
+              e.set_payload(a)
+              log.debug("%s (%s) replying ARP to %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
               msg = of.ofp_packet_out()
               msg.data = e.pack()
               msg.actions.append(of.ofp_action_output(port = inport))
@@ -175,8 +179,23 @@ class LoadBalancerSwitch (object):
         else:
             log.info("Some other ARP opcode, probably do something smart here")
     elif packet.type == ethernet.IP_TYPE:
-      log.info("Some IP_TYPE opcode, probably do something smart here")
-      
+      log.info("IP TYPE: Selecting a new server to respond")
+      selectedServerIp = self.serversIps[select_server()]
+      log.info("Selected Server: %s" % selectedServerIp)
+      a = packet.next
+      r = arp()
+      r.opcode = arp.REQUEST
+      r.hwsrc = self.switchMac
+      r.protodst = selectedServerIp
+      r.protosrc = a.srcip
+      e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=ETHER_BROADCAST)
+      e.set_payload(r)
+      log.debug("%s requesting ARP to %s" % (r.protosrc, r.protodst))
+      msg = of.ofp_packet_out()
+      msg.data = e.pack()
+      msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
+      event.connection.send(msg)
+      return
 
 
 class load_balancer (object):
