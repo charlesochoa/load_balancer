@@ -34,6 +34,7 @@ class LoadBalancerSwitch (object):
     self.pendingPackets = {}
     self.clientsIps = [IPAddr("10.0.0." + str(x)) for x in  range(1,HOST_NUMBER/2 +1) ]
     self.serversIps = [IPAddr("10.0.0." + str(x)) for x in  range(HOST_NUMBER/2 +1,HOST_NUMBER +1) ]
+    self.serversPorts = [7,8,9,10,11,12]
     # We want to hear PacketIn messages, so we listen
     # to the connection
     connection.addListeners(self)
@@ -58,144 +59,99 @@ class LoadBalancerSwitch (object):
       # return 0
       return random.randint(0,5)
 
-    """
-    if arp request
-        we dont know the destination
-        select the destination, and send arp to search for port and mac
-        now that we know, we make the flow mod that make this conexion possible 
-          from h1 to h7 for example, and viceversa
-        reply an arp response with fake ip
-    else if icmp request
-
-    """
     if packet.type == packet.ARP_TYPE:
-        log.info("packet.ARP_TYPE == true")
+        a = packet.next
+        log.info("packet is ARP_TYPE")
         if packet.payload.opcode == arp.REQUEST:
-            log.info("arp.REQUEST == true")
-            a = packet.next
-            self.hosts[a.protosrc] = (a.hwsrc, inport)
-            log.info("self.hosts")
-            log.info(self.hosts)
-            if a.protosrc in self.clientsIps:
-              selectedServer = self.serversIps[select_server()]
-              a.hwsrc = self.switchMac
-              a.protodst = selectedServer
-              e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=ETHER_BROADCAST)
-              e.set_payload(a)
-              log.debug("%s requesting ARP to %s" % (a.protosrc, a.protodst))
-              msg = of.ofp_packet_out()
-              msg.data = e.pack()
-              msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
-              event.connection.send(msg)
-              return
-            elif a.protosrc in self.serversIps:
-              log.warning("Receiving an ARP request from a server!!")
-              log.debug("%s (%s) => %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
-              newSourceMac = self.switchMac
-              newDestinyMac = a.hwsrc
-              newSourceIp = a.protosrc
-              newDestinyIp = a.protodst
-              a.opcode = arp.REPLY
-              a.hwsrc = newSourceMac
-              a.hwdst = newDestinyMac
-              a.protosrc = newSourceIp
-              a.protodst = newDestinyIp
-              e = ethernet(type=ethernet.ARP_TYPE, src=newSourceMac, dst=newDestinyMac)
-              e.set_payload(a)
-              log.debug("%s (%s) replying ARP to %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
-              msg = of.ofp_packet_out()
-              msg.data = e.pack()
-              msg.actions.append(of.ofp_action_output(port = inport))
-              event.connection.send(msg)
-              return
+          log.info("payload is arp.REQUEST from %s" % (a.protosrc))
+          macdst = a.hwsrc
+          macsrc = self.switchMac
+          ipsrc = a.protodst
+          ipdst = a.protosrc
+
+          a.opcode = arp.REPLY
+          a.hwsrc = macsrc
+          a.hwdst = macdst
+          a.protosrc = ipsrc
+          a.protodst = ipdst
+          e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=macdst)
+          e.set_payload(a)
+          log.debug("%s (%s) replying ARP to %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
+          msg = of.ofp_packet_out()
+          msg.data = e.pack()
+          msg.actions.append(of.ofp_action_output(port = inport))
+          event.connection.send(msg)
+          return
 
         elif packet.payload.opcode == arp.REPLY:
-            log.info("arp.REPLY == true")
             a = packet.next
-            self.hosts[a.protosrc] = (a.hwsrc, inport)
-            log.info("self.hosts")
-            log.info(self.hosts)
-            log.debug("%s (%s) replying ARP to %s (%s)" % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
-            if a.protosrc in self.serversIps:
-              clientIp = a.protodst
-              serverIp = a.protosrc
-              clientMac, clientPort = self.hosts[clientIp]
-              serverMac, serverPort = self.hosts[serverIp]
-
-              msg = of.ofp_flow_mod()
-              msg.match.dl_type = 0x800 
-              msg.match.dl_src = clientMac
-              msg.match.dl_dst = self.switchMac
-              msg.match.nw_src = clientIp
-              msg.match.nw_dst = self.switchIp
-              msg.idle_timeout = 10
-              msg.hard_timeout = 10
-              actions = []
-              actions.append(of.ofp_action_dl_addr.set_src(self.switchMac))
-              actions.append(of.ofp_action_dl_addr.set_dst(serverMac))
-              actions.append(of.ofp_action_nw_addr.set_src(clientIp))
-              actions.append(of.ofp_action_nw_addr.set_dst(serverIp))
-              actions.append(of.ofp_action_output(port = serverPort))
-              msg.actions = actions
-              event.connection.send(msg)
-              log.debug("First flowMod: from %s (%s) ==> %s (%s)" % (clientIp,clientMac,serverIp,serverMac))
-
-              msg = of.ofp_flow_mod() 
-              msg.match.dl_type = 0x800 
-              msg.match.dl_src = serverMac
-              msg.match.dl_dst = self.switchMac
-              msg.match.nw_src = serverIp
-              msg.match.nw_dst = clientIp
-              msg.idle_timeout = 10
-              msg.hard_timeout = 10
-              actions = []
-              actions.append(of.ofp_action_dl_addr.set_src(self.switchMac))
-              actions.append(of.ofp_action_dl_addr.set_dst(clientMac))
-              actions.append(of.ofp_action_nw_addr.set_src(self.switchIp))
-              actions.append(of.ofp_action_nw_addr.set_dst(clientIp))
-              actions.append(of.ofp_action_output(port = clientPort))
-              msg.actions = actions
-              event.connection.send(msg)
-              log.debug("Second flowMod: from %s (%s) <== %s (%s)" % (clientIp,clientMac,serverIp,serverMac))
-
-
-              r = arp()
-              r.opcode = arp.REPLY
-              r.hwsrc = self.switchMac
-              r.hwdst = clientMac
-              r.protosrc = self.switchIp
-              r.protodst = clientIp
-              e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=clientMac)
-              e.set_payload(r)
-              log.debug("%s Replying ARP to %s" % (r.protosrc, r.protodst))
-              msg = of.ofp_packet_out()
-              msg.data = e.pack()
-              msg.actions.append(of.ofp_action_output(port = clientPort))
-              msg.in_port = inport
-              event.connection.send(msg)
-              log.debug("Third packetOut: from %s (%s) -> %s (%s)" % (r.protosrc,r.hwsrc,r.protodst,r.hwdst))
-
+            log.info("payload is arp.REPLY %s" % (a.protosrc))
+            log.debug("%s (%s) ARP reply to %s (%s). Droped." % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
+           
             return
         else:
-            log.info("Some other ARP opcode, probably do something smart here")
+            log.warning("Some other ARP opcode, probably do something smart here")
     elif packet.type == ethernet.IP_TYPE:
-      log.info("IP TYPE: Selecting a new server to respond")
-      selectedServerIp = self.serversIps[select_server()]
-      log.info("Selected Server: %s" % selectedServerIp)
-      a = packet.next
-      r = arp()
-      r.opcode = arp.REQUEST
-      r.hwsrc = self.switchMac
-      r.protodst = selectedServerIp
-      r.protosrc = a.srcip
-      e = ethernet(type=ethernet.ARP_TYPE, src=self.switchMac, dst=ETHER_BROADCAST)
-      e.set_payload(r)
-      log.debug("%s requesting ARP to %s" % (r.protosrc, r.protodst))
-      msg = of.ofp_packet_out()
-      msg.data = e.pack()
-      msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD))
-      event.connection.send(msg)
-      return
+      if packet.find('icmp') != None:
+        a = packet.next
+        if a.srcip in self.clientsIps:
+          log.info("IP TYPE from %s Selecting a new server to respond" % (a.srcip))
+          selectedServer = select_server()
+          serverIp = self.serversIps[selectedServer]
+          serverMac = self.serversMacs[selectedServer]
+          serverPort = self.serversPorts[selectedServer]
+          log.info("Selected Server: %s" % serverIp)
+          clientIp = a.srcip
+          clientMac = packet.src
+          clientPort = inport
+
+          msg = of.ofp_flow_mod()
+          msg.match.dl_type = pkt.ethernet.IP_TYPE 
+          msg.match.dl_src = clientMac
+          msg.match.dl_dst = self.switchMac
+          msg.match.nw_src = clientIp
+          msg.match.nw_dst = self.switchIp
+          msg.idle_timeout = 10
+          msg.hard_timeout = 10
+          actions = []
+          actions.append(of.ofp_action_dl_addr.set_src(self.switchMac))
+          actions.append(of.ofp_action_dl_addr.set_dst(serverMac))
+          actions.append(of.ofp_action_nw_addr.set_src(clientIp))
+          actions.append(of.ofp_action_nw_addr.set_dst(serverIp))
+          actions.append(of.ofp_action_output(port = serverPort))
+          msg.actions = actions
+          event.connection.send(msg)
+          log.debug("FlowMod: from %s (%s) ==> %s (%s)" % (clientIp,clientMac,serverIp,serverMac))
+
+          msg = of.ofp_flow_mod() 
+          msg.match.dl_type = pkt.ethernet.IP_TYPE
+          msg.match.dl_src = serverMac
+          msg.match.dl_dst = self.switchMac
+          msg.match.nw_src = serverIp
+          msg.match.nw_dst = clientIp
+          msg.idle_timeout = 10
+          msg.hard_timeout = 10
+          actions = []
+          actions.append(of.ofp_action_dl_addr.set_src(self.switchMac))
+          actions.append(of.ofp_action_dl_addr.set_dst(clientMac))
+          actions.append(of.ofp_action_nw_addr.set_src(self.switchIp))
+          actions.append(of.ofp_action_nw_addr.set_dst(clientIp))
+          actions.append(of.ofp_action_output(port = clientPort))
+          msg.actions = actions
+          event.connection.send(msg)
+          log.debug("FlowMod: from %s (%s) <== %s (%s)" % (clientIp,clientMac,serverIp,serverMac))
+
+          a.dstip = serverIp
+          e = ethernet(type=ethernet.IP_TYPE, src=self.switchMac, dst=serverMac)
+          e.set_payload(a)
+          log.debug("PacketOut: %s Requesting ICMP to %s" % (a.srcip, a.dstip))
+          msg = of.ofp_packet_out()
+          msg.data = e.pack()
+          msg.actions.append(of.ofp_action_output(port = serverPort))
+          msg.in_port = inport
+          event.connection.send(msg)
+
+        
 
 
 class load_balancer (object):
