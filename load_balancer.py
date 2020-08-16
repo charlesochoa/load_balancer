@@ -14,56 +14,49 @@ import random
 
 
 log = core.getLogger()
-
-# We don't want to flood immediately when a switch connects.
-# Can be overriden on commandline.
-_flood_delay = 0
 HOST_NUMBER = 12
 
 class LoadBalancerSwitch (object):
 
   def __init__ (self, connection):
-    # Switch we'll be adding L2 learning switch capabilities to
     self.connection = connection
 
     self.switchMac = EthAddr("00:00:00:00:00:" + str(HOST_NUMBER+1))
     self.switchIp = IPAddr("10.0.0." + str(HOST_NUMBER+1))
-    # self.clientsMacs = [EthAddr("00:00:00:00:00:" + str(x)) for x in  range(1,HOST_NUMBER/2 +1) ]
     self.serversMacs = [EthAddr("00:00:00:00:00:" + str(x)) for x in  range(HOST_NUMBER/2 +1,HOST_NUMBER +1) ]
     self.hosts = {}
     self.pendingPackets = {}
-    self.clientsIps = [IPAddr("10.0.0." + str(x)) for x in  range(1,HOST_NUMBER/2 +1) ]
     self.serversIps = [IPAddr("10.0.0." + str(x)) for x in  range(HOST_NUMBER/2 +1,HOST_NUMBER +1) ]
     self.serversPorts = [7,8,9,10,11,12]
+    self.turn = 5
     # We want to hear PacketIn messages, so we listen
     # to the connection
     connection.addListeners(self)
 
-    # We just use this to know when to log a helpful message
-    self.hold_down_expired = _flood_delay == 0
-
     log.debug("Initializing Load Balancer")
     log.debug("Clients")
-    log.debug(self.clientsIps)
     log.debug("Servers")
     log.debug(self.serversIps)
+      
+  
 
   def _handle_PacketIn (self, event):
 
 
-    log.info("PACKET_IN")
+    log.debug("PACKET_IN")
     inport = event.port
     packet = event.parsed
 
     def select_server():
-      # return 0
-      return random.randint(0,5)
+      self.turn = (self.turn + 1) % 6
+      return self.turn
+      # return random.randint(0,5)
 
     if packet.type == packet.ARP_TYPE:
         a = packet.next
-        log.info("packet is ARP_TYPE")
+        log.debug("packet is ARP_TYPE")
         if packet.payload.opcode == arp.REQUEST:
-          log.info("payload is arp.REQUEST from %s" % (a.protosrc))
+          log.debug("payload is arp.REQUEST from %s" % (a.protosrc))
           macdst = a.hwsrc
           macsrc = self.switchMac
           ipsrc = a.protodst
@@ -85,7 +78,7 @@ class LoadBalancerSwitch (object):
 
         elif packet.payload.opcode == arp.REPLY:
             a = packet.next
-            log.info("payload is arp.REPLY %s" % (a.protosrc))
+            log.debug("payload is arp.REPLY %s" % (a.protosrc))
             log.debug("%s (%s) ARP reply to %s (%s). Droped." % (a.protosrc, a.hwsrc, a.protodst, a.hwdst))
            
             return
@@ -94,13 +87,13 @@ class LoadBalancerSwitch (object):
     elif packet.type == ethernet.IP_TYPE:
       if packet.find('icmp') != None:
         a = packet.next
-        if a.srcip in self.clientsIps:
-          log.info("IP TYPE from %s Selecting a new server to respond" % (a.srcip))
+        if a.srcip not in self.serversIps:
+          log.debug("IP TYPE from %s Selecting a new server to respond" % (a.srcip))
           selectedServer = select_server()
           serverIp = self.serversIps[selectedServer]
           serverMac = self.serversMacs[selectedServer]
           serverPort = self.serversPorts[selectedServer]
-          log.info("Selected Server: %s" % serverIp)
+          log.debug("Selected Server: %s" % serverIp)
           clientIp = a.srcip
           clientMac = packet.src
           clientPort = inport
@@ -153,6 +146,18 @@ class LoadBalancerSwitch (object):
 
         
 
+def _timer_func ():
+  for connection in core.openflow._connections.values():
+    connection.send(of.ofp_stats_request(body=of.ofp_port_stats_request()))
+
+def _handle_portstats_received (event):
+  log.info(" ")
+  log.info(" ")
+  log.info(" ")
+  log.info("Results:")
+  log.info(" ")
+  for s in event.stats:
+    log.info("Port %s: rx %s, tx %s", s.port_no, s.rx_packets, s.tx_packets)
 
 class load_balancer (object):
   def __init__ (self):
@@ -164,4 +169,9 @@ class load_balancer (object):
 
 
 def launch ():
+  from pox.lib.recoco import Timer
+
+  core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received) 
   core.registerNew(load_balancer)
+  Timer(5, _timer_func, recurring=True)
+
