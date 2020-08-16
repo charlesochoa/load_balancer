@@ -48,9 +48,9 @@ class LoadBalancerSwitch (object):
     packet = event.parsed
 
     def select_server():
-      self.turn = (self.turn + 1) % 6
-      return self.turn
-      # return random.randint(0,5)
+      #self.turn = (self.turn + 1) % 6
+      #return self.turn
+      return random.randint(0,5)
 
     if packet.type == packet.ARP_TYPE:
         a = packet.next
