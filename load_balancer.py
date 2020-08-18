@@ -144,8 +144,6 @@ class LoadBalancerSwitch (object):
           msg.in_port = inport
           event.connection.send(msg)
 
-        
-
 def _timer_func ():
   for connection in core.openflow._connections.values():
     connection.send(of.ofp_stats_request(body=of.ofp_port_stats_request()))
